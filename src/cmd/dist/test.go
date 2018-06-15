@@ -234,12 +234,32 @@ func (t *tester) shouldRunTest(name string) bool {
 	return false
 }
 
+// short returns a -short flag to pass to 'go test'.
+// It returns "-short", unless the environment variable
+// GO_TEST_SHORT is set to a non-empty, false-ish string.
+//
+// This environment variable is meant to be an internal
+// detail between the Go build system and cmd/dist
+// and is not intended for use by users.
+func short() string {
+	if v := os.Getenv("GO_TEST_SHORT"); v != "" {
+		short, err := strconv.ParseBool(v)
+		if err != nil {
+			log.Fatalf("invalid GO_TEST_SHORT %q: %v", v, err)
+		}
+		if !short {
+			return "-short=false"
+		}
+	}
+	return "-short"
+}
+
 // goTest returns the beginning of the go test command line.
 // Callers should use goTest and then pass flags overriding these
 // defaults as later arguments in the command line.
 func (t *tester) goTest() []string {
 	return []string{
-		"go", "test", "-short", "-count=1", t.tags(), t.runFlag(""),
+		"go", "test", short(), "-count=1", t.tags(), t.runFlag(""),
 	}
 }
 
@@ -273,10 +293,6 @@ func (t *tester) registerStdTest(pkg string) {
 	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		stdMatches = append(stdMatches, pkg)
 	}
-	timeoutSec := 180
-	if pkg == "cmd/go" {
-		timeoutSec *= 2
-	}
 	t.tests = append(t.tests, distTest{
 		name:    testName,
 		heading: "Testing packages.",
@@ -288,9 +304,17 @@ func (t *tester) registerStdTest(pkg string) {
 			timelog("start", dt.name)
 			defer timelog("end", dt.name)
 			ranGoTest = true
+
+			timeoutSec := 180
+			for _, pkg := range stdMatches {
+				if pkg == "cmd/go" {
+					timeoutSec *= 2
+					break
+				}
+			}
 			args := []string{
 				"test",
-				"-short",
+				short(),
 				t.tags(),
 				t.timeout(timeoutSec),
 				"-gcflags=all=" + gogcflags,
@@ -328,9 +352,10 @@ func (t *tester) registerRaceBenchTest(pkg string) {
 			ranGoBench = true
 			args := []string{
 				"test",
-				"-short",
+				short(),
 				"-race",
-				"-run=^$", // nothing. only benchmarks.
+				t.timeout(1200), // longer timeout for race with benchmarks
+				"-run=^$",       // nothing. only benchmarks.
 				"-benchtime=.1s",
 				"-cpu=4",
 			}
@@ -676,7 +701,7 @@ func (t *tester) registerTests() {
 		if gohostos == "linux" && goarch == "amd64" {
 			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", "main.go")
 		}
-		if goos == "linux" && goarch == "amd64" {
+		if goos == "linux" && (goarch == "amd64" || goarch == "arm64") {
 			t.registerHostTest("testsanitizers/msan", "../misc/cgo/testsanitizers", "misc/cgo/testsanitizers", ".")
 		}
 		if t.hasBash() && goos != "android" && !t.iOS() && gohostos != "windows" {
@@ -864,7 +889,7 @@ func (t *tester) extLink() bool {
 	pair := gohostos + "-" + goarch
 	switch pair {
 	case "android-arm",
-		"darwin-arm", "darwin-arm64",
+		"darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 		"dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
 		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le", "linux-mips", "linux-mipsle", "linux-s390x",
@@ -872,15 +897,6 @@ func (t *tester) extLink() bool {
 		"openbsd-386", "openbsd-amd64",
 		"windows-386", "windows-amd64":
 		return true
-	case "darwin-386", "darwin-amd64":
-		// linkmode=external fails on OS X 10.6 and earlier == Darwin
-		// 10.8 and earlier.
-		unameR, err := exec.Command("uname", "-r").Output()
-		if err != nil {
-			log.Fatalf("uname -r: %v", err)
-		}
-		major, _ := strconv.Atoi(string(unameR[:bytes.IndexByte(unameR, '.')]))
-		return major > 10
 	}
 	return false
 }
@@ -1302,7 +1318,7 @@ func (t *tester) raceDetectorSupported() bool {
 	case "linux", "darwin", "freebsd", "windows":
 		// The race detector doesn't work on Alpine Linux:
 		// golang.org/issue/14481
-		return t.cgoEnabled && goarch == "amd64" && gohostos == goos && !isAlpineLinux()
+		return t.cgoEnabled && (goarch == "amd64" || goarch == "ppc64le") && gohostos == goos && !isAlpineLinux()
 	}
 	return false
 }

@@ -6,7 +6,7 @@ package aes
 
 import (
 	"crypto/cipher"
-	"crypto/internal/cipherhw"
+	"internal/cpu"
 )
 
 type code int
@@ -19,9 +19,9 @@ const (
 )
 
 type aesCipherAsm struct {
-	function code      // code for cipher message instruction
-	key      []byte    // key (128, 192 or 256 bytes)
-	storage  [256]byte // array backing key slice
+	function code     // code for cipher message instruction
+	key      []byte   // key (128, 192 or 256 bits)
+	storage  [32]byte // array backing key slice
 }
 
 // cryptBlocks invokes the cipher message (KM) instruction with
@@ -30,10 +30,12 @@ type aesCipherAsm struct {
 //go:noescape
 func cryptBlocks(c code, key, dst, src *byte, length int)
 
-var useAsm = cipherhw.AESGCMSupport()
-
 func newCipher(key []byte) (cipher.Block, error) {
-	if !useAsm {
+	// The aesCipherAsm type implements the cbcEncAble, cbcDecAble,
+	// ctrAble and gcmAble interfaces. We therefore need to check
+	// for all the features required to implement these modes.
+	// Keep in sync with crypto/tls/common.go.
+	if !(cpu.S390X.HasAES && cpu.S390X.HasAESCBC && cpu.S390X.HasAESCTR && (cpu.S390X.HasGHASH || cpu.S390X.HasAESGCM)) {
 		return newCipherGeneric(key)
 	}
 

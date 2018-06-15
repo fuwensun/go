@@ -63,7 +63,7 @@ type gcmFieldElement struct {
 }
 
 // gcm represents a Galois Counter Mode with a specific key. See
-// http://csrc.nist.gov/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-revised-spec.pdf
+// https://csrc.nist.gov/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-revised-spec.pdf
 type gcm struct {
 	cipher    Block
 	nonceSize int
@@ -80,7 +80,7 @@ type gcm struct {
 // An exception is when the underlying Block was created by aes.NewCipher
 // on systems with hardware support for AES. See the crypto/aes package documentation for details.
 func NewGCM(cipher Block) (AEAD, error) {
-	return NewGCMWithNonceAndTagSize(cipher, gcmStandardNonceSize, gcmTagSize)
+	return newGCMWithNonceAndTagSize(cipher, gcmStandardNonceSize, gcmTagSize)
 }
 
 // NewGCMWithNonceSize returns the given 128-bit, block cipher wrapped in Galois
@@ -90,18 +90,22 @@ func NewGCM(cipher Block) (AEAD, error) {
 // cryptosystem that uses non-standard nonce lengths. All other users should use
 // NewGCM, which is faster and more resistant to misuse.
 func NewGCMWithNonceSize(cipher Block, size int) (AEAD, error) {
-	return NewGCMWithNonceAndTagSize(cipher, size, gcmTagSize)
+	return newGCMWithNonceAndTagSize(cipher, size, gcmTagSize)
 }
 
-// NewGCMWithNonceAndTagSize returns the given 128-bit, block cipher wrapped in Galois
-// Counter Mode, which accepts nonces of the given length and generates tags with the given length.
+// NewGCMWithTagSize returns the given 128-bit, block cipher wrapped in Galois
+// Counter Mode, which generates tags with the given length.
 //
 // Tag sizes between 12 and 16 bytes are allowed.
 //
 // Only use this function if you require compatibility with an existing
 // cryptosystem that uses non-standard tag lengths. All other users should use
 // NewGCM, which is more resistant to misuse.
-func NewGCMWithNonceAndTagSize(cipher Block, nonceSize, tagSize int) (AEAD, error) {
+func NewGCMWithTagSize(cipher Block, tagSize int) (AEAD, error) {
+	return newGCMWithNonceAndTagSize(cipher, gcmStandardNonceSize, tagSize)
+}
+
+func newGCMWithNonceAndTagSize(cipher Block, nonceSize, tagSize int) (AEAD, error) {
 	if tagSize < gcmMinimumTagSize || tagSize > gcmBlockSize {
 		return nil, errors.New("cipher: incorrect tag size given to GCM")
 	}
@@ -413,6 +417,7 @@ func (g *gcm) auth(out, ciphertext, additionalData []byte, tagMask *[gcmTagSize]
 }
 
 func getUint64(data []byte) uint64 {
+	_ = data[7] // bounds check hint to compiler; see golang.org/issue/14808
 	r := uint64(data[0])<<56 |
 		uint64(data[1])<<48 |
 		uint64(data[2])<<40 |
@@ -425,6 +430,7 @@ func getUint64(data []byte) uint64 {
 }
 
 func putUint64(out []byte, v uint64) {
+	_ = out[7] // bounds check hint to compiler; see golang.org/issue/14808
 	out[0] = byte(v >> 56)
 	out[1] = byte(v >> 48)
 	out[2] = byte(v >> 40)

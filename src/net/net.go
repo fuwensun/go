@@ -229,7 +229,7 @@ func (c *conn) SetDeadline(t time.Time) error {
 	if !c.ok() {
 		return syscall.EINVAL
 	}
-	if err := c.fd.pfd.SetDeadline(t); err != nil {
+	if err := c.fd.SetDeadline(t); err != nil {
 		return &OpError{Op: "set", Net: c.fd.net, Source: nil, Addr: c.fd.laddr, Err: err}
 	}
 	return nil
@@ -240,7 +240,7 @@ func (c *conn) SetReadDeadline(t time.Time) error {
 	if !c.ok() {
 		return syscall.EINVAL
 	}
-	if err := c.fd.pfd.SetReadDeadline(t); err != nil {
+	if err := c.fd.SetReadDeadline(t); err != nil {
 		return &OpError{Op: "set", Net: c.fd.net, Source: nil, Addr: c.fd.laddr, Err: err}
 	}
 	return nil
@@ -251,7 +251,7 @@ func (c *conn) SetWriteDeadline(t time.Time) error {
 	if !c.ok() {
 		return syscall.EINVAL
 	}
-	if err := c.fd.pfd.SetWriteDeadline(t); err != nil {
+	if err := c.fd.SetWriteDeadline(t); err != nil {
 		return &OpError{Op: "set", Net: c.fd.net, Source: nil, Addr: c.fd.laddr, Err: err}
 	}
 	return nil
@@ -490,6 +490,12 @@ type temporary interface {
 }
 
 func (e *OpError) Temporary() bool {
+	// Treat ECONNRESET and ECONNABORTED as temporary errors when
+	// they come from calling accept. See issue 6163.
+	if e.Op == "accept" && isConnError(e.Err) {
+		return true
+	}
+
 	if ne, ok := e.Err.(*os.SyscallError); ok {
 		t, ok := ne.Err.(temporary)
 		return ok && t.Temporary()

@@ -202,7 +202,9 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	ctxt.dostrdata()
 	deadcode(ctxt)
-	fieldtrack(ctxt)
+	if objabi.Fieldtrack_enabled != 0 {
+		fieldtrack(ctxt)
+	}
 	ctxt.callgraph()
 
 	ctxt.doelf()
@@ -222,8 +224,9 @@ func Main(arch *sys.Arch, theArch Arch) {
 	ctxt.typelink()
 	ctxt.symtab()
 	ctxt.dodata()
-	ctxt.address()
+	order := ctxt.address()
 	ctxt.reloc()
+	ctxt.layout(order)
 	thearch.Asmb(ctxt)
 	ctxt.undef()
 	ctxt.hostlink()

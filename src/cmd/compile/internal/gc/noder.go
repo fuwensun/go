@@ -19,6 +19,10 @@ import (
 	"cmd/internal/src"
 )
 
+// parseFiles concurrently parses files into *syntax.File structures.
+// Each declaration in every *syntax.File is converted to a syntax tree
+// and its root represented by *Node is appended to xtop.
+// Returns the total count of parsed lines.
 func parseFiles(filenames []string) uint {
 	var noders []*noder
 	// Limit the number of simultaneously open files.
@@ -66,17 +70,6 @@ func parseFiles(filenames []string) uint {
 	}
 
 	localpkg.Height = myheight
-
-	if flagiexport {
-		// init.go requires all imported init functions to be
-		// fully resolved.
-		// TODO(mdempsky): Can this be done elsewhere more cleanly?
-		for _, s := range types.InitSyms {
-			if n := asNode(s.Def); n != nil && s.Pkg != localpkg {
-				resolve(n)
-			}
-		}
-	}
 
 	return lines
 }
@@ -620,9 +613,7 @@ func (p *noder) expr(expr syntax.Expr) *Node {
 				x = unparen(x) // TODO(mdempsky): Needed?
 				if x.Op == OCOMPLIT {
 					// Special case for &T{...}: turn into (*T){...}.
-					// TODO(mdempsky): Switch back to p.nod after we
-					// get rid of gcCompat.
-					x.Right = nod(OIND, x.Right, nil)
+					x.Right = p.nod(expr, OIND, x.Right, nil)
 					x.Right.SetImplicit(true)
 					return x
 				}

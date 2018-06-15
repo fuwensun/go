@@ -15,7 +15,6 @@ import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
-	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"cmd/internal/sys"
 )
@@ -87,6 +86,14 @@ func initssaconfig() {
 	// GO386=387 runtime functions
 	ControlWord64trunc = sysfunc("controlWord64trunc")
 	ControlWord32 = sysfunc("controlWord32")
+
+	// Wasm
+	WasmMove = sysfunc("wasmMove")
+	WasmZero = sysfunc("wasmZero")
+	WasmDiv = sysfunc("wasmDiv")
+	WasmTruncS = sysfunc("wasmTruncS")
+	WasmTruncU = sysfunc("wasmTruncU")
+	SigPanic = sysfunc("sigpanic")
 }
 
 // buildssa builds an SSA function for fn.
@@ -695,7 +702,7 @@ func (s *state) stmt(n *Node) {
 		s.call(n, callNormal)
 		if n.Op == OCALLFUNC && n.Left.Op == ONAME && n.Left.Class() == PFUNC {
 			if fn := n.Left.Sym.Name; compiling_runtime && fn == "throw" ||
-				n.Left.Sym.Pkg == Runtimepkg && (fn == "throwinit" || fn == "gopanic" || fn == "panicwrap" || fn == "block") {
+				n.Left.Sym.Pkg == Runtimepkg && (fn == "throwinit" || fn == "gopanic" || fn == "panicwrap" || fn == "block" || fn == "panicmakeslicelen" || fn == "panicmakeslicecap") {
 				m := s.mem()
 				b := s.endBlock()
 				b.Kind = ssa.BlockExit
@@ -779,7 +786,7 @@ func (s *state) stmt(n *Node) {
 		}
 
 		b := s.endBlock()
-		b.Pos = s.lastPos // Do this even if b is an empty block.
+		b.Pos = s.lastPos.WithIsStmt() // Do this even if b is an empty block.
 		b.AddEdgeTo(lab.target)
 
 	case OAS:
@@ -927,7 +934,7 @@ func (s *state) stmt(n *Node) {
 	case ORETURN:
 		s.stmtList(n.List)
 		b := s.exit()
-		b.Pos = s.lastPos
+		b.Pos = s.lastPos.WithIsStmt()
 
 	case ORETJMP:
 		s.stmtList(n.List)
@@ -958,13 +965,15 @@ func (s *state) stmt(n *Node) {
 		}
 
 		b := s.endBlock()
-		b.Pos = s.lastPos // Do this even if b is an empty block.
+		b.Pos = s.lastPos.WithIsStmt() // Do this even if b is an empty block.
 		b.AddEdgeTo(to)
 
 	case OFOR, OFORUNTIL:
 		// OFOR: for Ninit; Left; Right { Nbody }
-		// For      = cond; body; incr
-		// Foruntil = body; incr; cond
+		// cond (Left); body (Nbody); incr (Right)
+		//
+		// OFORUNTIL: for Ninit; Left; Right; List { Nbody }
+		// => body: { Nbody }; incr: Right; if Left { lateincr: List; goto body }; end:
 		bCond := s.f.NewBlock(ssa.BlockPlain)
 		bBody := s.f.NewBlock(ssa.BlockPlain)
 		bIncr := s.f.NewBlock(ssa.BlockPlain)
@@ -1017,30 +1026,29 @@ func (s *state) stmt(n *Node) {
 			b.AddEdgeTo(bIncr)
 		}
 
-		// generate incr
+		// generate incr (and, for OFORUNTIL, condition)
 		s.startBlock(bIncr)
 		if n.Right != nil {
 			s.stmt(n.Right)
 		}
-		if b := s.endBlock(); b != nil {
-			b.AddEdgeTo(bCond)
-			// It can happen that bIncr ends in a block containing only VARKILL,
-			// and that muddles the debugging experience.
-			if n.Op != OFORUNTIL && b.Pos == src.NoXPos {
-				b.Pos = bCond.Pos
+		if n.Op == OFOR {
+			if b := s.endBlock(); b != nil {
+				b.AddEdgeTo(bCond)
+				// It can happen that bIncr ends in a block containing only VARKILL,
+				// and that muddles the debugging experience.
+				if n.Op != OFORUNTIL && b.Pos == src.NoXPos {
+					b.Pos = bCond.Pos
+				}
 			}
-		}
-
-		if n.Op == OFORUNTIL {
-			// generate code to test condition
-			s.startBlock(bCond)
-			if n.Left != nil {
-				s.condBranch(n.Left, bBody, bEnd, 1)
-			} else {
-				b := s.endBlock()
-				b.Kind = ssa.BlockPlain
-				b.AddEdgeTo(bBody)
-			}
+		} else {
+			// bCond is unused in OFORUNTIL, so repurpose it.
+			bLateIncr := bCond
+			// test condition
+			s.condBranch(n.Left, bLateIncr, bEnd, 1)
+			// generate late increment
+			s.startBlock(bLateIncr)
+			s.stmtList(n.List)
+			s.endBlock().AddEdgeTo(bBody)
 		}
 
 		s.startBlock(bEnd)
@@ -1681,7 +1689,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 		}
 
 		// unsafe.Pointer <--> *T
-		if to.Etype == TUNSAFEPTR && from.IsPtr() || from.Etype == TUNSAFEPTR && to.IsPtr() {
+		if to.Etype == TUNSAFEPTR && from.IsPtrShaped() || from.Etype == TUNSAFEPTR && to.IsPtrShaped() {
 			return v
 		}
 
@@ -1794,7 +1802,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 					conv = conv1
 				}
 			}
-			if thearch.LinkArch.Family == sys.ARM64 || s.softFloat {
+			if thearch.LinkArch.Family == sys.ARM64 || thearch.LinkArch.Family == sys.Wasm || s.softFloat {
 				if conv1, ok1 := uint64fpConvOpToSSA[twoTypes{s.concreteEtype(ft), s.concreteEtype(tt)}]; ok1 {
 					conv = conv1
 				}
@@ -2108,11 +2116,6 @@ func (s *state) expr(n *Node) *ssa.Value {
 		return s.load(n.Type, p)
 
 	case ODOT:
-		t := n.Left.Type
-		if canSSAType(t) {
-			v := s.expr(n.Left)
-			return s.newValue1I(ssa.OpStructSelect, n.Type, int64(fieldIdx(n)), v)
-		}
 		if n.Left.Op == OSTRUCTLIT {
 			// All literals with nonzero fields have already been
 			// rewritten during walk. Any that remain are just T{}
@@ -2122,8 +2125,16 @@ func (s *state) expr(n *Node) *ssa.Value {
 			}
 			return s.zeroVal(n.Type)
 		}
-		p := s.addr(n, false)
-		return s.load(n.Type, p)
+		// If n is addressable and can't be represented in
+		// SSA, then load just the selected field. This
+		// prevents false memory dependencies in race/msan
+		// instrumentation.
+		if islvalue(n) && !s.canSSA(n) {
+			p := s.addr(n, false)
+			return s.load(n.Type, p)
+		}
+		v := s.expr(n.Left)
+		return s.newValue1I(ssa.OpStructSelect, n.Type, int64(fieldIdx(n)), v)
 
 	case ODOTPTR:
 		p := s.exprPtr(n.Left, false, n.Pos)
@@ -2827,10 +2838,11 @@ func init() {
 		},
 		all...)
 
-	addF("runtime", "getcallerpc",
+	add("runtime", "getcallerpc",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			return s.newValue0(ssa.OpGetCallerPC, s.f.Config.Types.Uintptr)
-		}, sys.AMD64, sys.I386)
+		},
+		all...)
 
 	add("runtime", "getcallersp",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
@@ -2977,6 +2989,8 @@ func init() {
 	alias("runtime/internal/atomic", "Casp1", "runtime/internal/atomic", "Cas", p4...)
 	alias("runtime/internal/atomic", "Casp1", "runtime/internal/atomic", "Cas64", p8...)
 
+	alias("runtime/internal/sys", "Ctz8", "math/bits", "TrailingZeros8", all...)
+
 	/******** math ********/
 	addF("math", "Sqrt",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
@@ -3002,7 +3016,7 @@ func init() {
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			return s.newValue1(ssa.OpRound, types.Types[TFLOAT64], args[0])
 		},
-		sys.ARM64, sys.S390X)
+		sys.ARM64, sys.PPC64, sys.S390X)
 	addF("math", "RoundToEven",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			return s.newValue1(ssa.OpRoundToEven, types.Types[TFLOAT64], args[0])
@@ -3735,14 +3749,6 @@ func canSSAType(t *types.Type) bool {
 		}
 		return false
 	case TSTRUCT:
-		// When instrumenting, don't SSA structs with more
-		// than one field. Otherwise, an access like "x.f" may
-		// be compiled into a full load of x, which can
-		// introduce false dependencies on other "x.g" fields.
-		if instrumenting && t.NumFields() > 1 {
-			return false
-		}
-
 		if t.NumFields() > ssa.MaxStruct {
 			return false
 		}
@@ -4687,14 +4693,34 @@ type SSAGenState struct {
 
 	maxarg int64 // largest frame size for arguments to calls made by the function
 
-	// Map from GC safe points to stack map index, generated by
+	// Map from GC safe points to liveness index, generated by
 	// liveness analysis.
-	stackMapIndex map[*ssa.Value]int
+	livenessMap LivenessMap
+
+	// lineRunStart records the beginning of the current run of instructions
+	// within a single block sharing the same line number
+	// Used to move statement marks to the beginning of such runs.
+	lineRunStart *obj.Prog
+
+	// wasm: The number of values on the WebAssembly stack. This is only used as a safeguard.
+	OnWasmStackSkipped int
 }
 
 // Prog appends a new Prog.
 func (s *SSAGenState) Prog(as obj.As) *obj.Prog {
-	return s.pp.Prog(as)
+	p := s.pp.Prog(as)
+	if ssa.LosesStmtMark(as) {
+		return p
+	}
+	// Float a statement start to the beginning of any same-line run.
+	// lineRunStart is reset at block boundaries, which appears to work well.
+	if s.lineRunStart == nil || s.lineRunStart.Pos.Line() != p.Pos.Line() {
+		s.lineRunStart = p
+	} else if p.Pos.IsStmt() == src.PosIsStmt {
+		s.lineRunStart.Pos = s.lineRunStart.Pos.WithIsStmt()
+		p.Pos = p.Pos.WithNotStmt()
+	}
+	return p
 }
 
 // Pc returns the current Prog.
@@ -4717,25 +4743,27 @@ func (s *SSAGenState) Br(op obj.As, target *ssa.Block) *obj.Prog {
 	return p
 }
 
-// DebugFriendlySetPos sets the position subject to heuristics
+// DebugFriendlySetPos adjusts Pos.IsStmt subject to heuristics
 // that reduce "jumpy" line number churn when debugging.
 // Spill/fill/copy instructions from the register allocator,
 // phi functions, and instructions with a no-pos position
 // are examples of instructions that can cause churn.
 func (s *SSAGenState) DebugFriendlySetPosFrom(v *ssa.Value) {
-	// The two choices here are either to leave lineno unchanged,
-	// or to explicitly set it to src.NoXPos.  Leaving it unchanged
-	// (reusing the preceding line number) produces slightly better-
-	// looking assembly language output from the compiler, and is
-	// expected by some already-existing tests.
-	// The debug information appears to be the same in either case
 	switch v.Op {
 	case ssa.OpPhi, ssa.OpCopy, ssa.OpLoadReg, ssa.OpStoreReg:
-		// leave the position unchanged from beginning of block
-		// or previous line number.
+		// These are not statements
+		s.SetPos(v.Pos.WithNotStmt())
 	default:
-		if v.Pos != src.NoXPos {
-			s.SetPos(v.Pos)
+		p := v.Pos
+		if p != src.NoXPos {
+			// If the position is defined, update the position.
+			// Also convert default IsStmt to NotStmt; only
+			// explicit statement boundaries should appear
+			// in the generated code.
+			if p.IsStmt() != src.PosIsStmt {
+				p = p.WithNotStmt()
+			}
+			s.SetPos(p)
 		}
 	}
 }
@@ -4746,7 +4774,7 @@ func genssa(f *ssa.Func, pp *Progs) {
 
 	e := f.Frontend().(*ssafn)
 
-	s.stackMapIndex = liveness(e, f)
+	s.livenessMap = liveness(e, f)
 
 	// Remember where each block starts.
 	s.bstart = make([]*obj.Prog, f.NumBlocks())
@@ -4782,8 +4810,9 @@ func genssa(f *ssa.Func, pp *Progs) {
 	// debuggers may attribute it to previous function in program.
 	firstPos := src.NoXPos
 	for _, v := range f.Entry.Values {
-		if v.Op != ssa.OpArg && v.Op != ssa.OpVarDef && v.Pos.IsStmt() != src.PosNotStmt { // TODO will be == src.PosIsStmt in pending CL, more accurate
-			firstPos = v.Pos.WithIsStmt()
+		if v.Pos.IsStmt() == src.PosIsStmt {
+			firstPos = v.Pos
+			v.Pos = firstPos.WithDefaultStmt()
 			break
 		}
 	}
@@ -4791,12 +4820,17 @@ func genssa(f *ssa.Func, pp *Progs) {
 	// Emit basic blocks
 	for i, b := range f.Blocks {
 		s.bstart[b.ID] = s.pp.next
+		s.pp.nextLive = LivenessInvalid
+		s.lineRunStart = nil
 
 		// Emit values in block
 		thearch.SSAMarkMoves(&s, b)
 		for _, v := range b.Values {
 			x := s.pp.next
 			s.DebugFriendlySetPosFrom(v)
+			// Attach this safe point to the next
+			// instruction.
+			s.pp.nextLive = s.livenessMap.Get(v)
 			switch v.Op {
 			case ssa.OpInitMem:
 				// memory arg needs no code
@@ -4892,9 +4926,12 @@ func genssa(f *ssa.Func, pp *Progs) {
 		}
 	}
 
-	// Resolve branches
+	// Resolove branchers, and relax DefaultStmt into NotStmt
 	for _, br := range s.Branches {
 		br.P.To.Val = s.bstart[br.B.ID]
+		if br.P.Pos.IsStmt() != src.PosIsStmt {
+			br.P.Pos = br.P.Pos.WithNotStmt()
+		}
 	}
 
 	if logProgs {
@@ -4948,7 +4985,7 @@ func genssa(f *ssa.Func, pp *Progs) {
 			}
 			buf.WriteString("</dl>")
 			buf.WriteString("</code>")
-			f.HTMLWriter.WriteColumn("genssa", "ssa-prog", buf.String())
+			f.HTMLWriter.WriteColumn("genssa", "genssa", "ssa-prog", buf.String())
 			// pp.Text.Ctxt.LineHist.PrintFilenameOnly = saved
 		}
 	}
@@ -5224,7 +5261,7 @@ func (s *SSAGenState) Call(v *ssa.Value) *obj.Prog {
 	} else {
 		// TODO(mdempsky): Can these differences be eliminated?
 		switch thearch.LinkArch.Family {
-		case sys.AMD64, sys.I386, sys.PPC64, sys.S390X:
+		case sys.AMD64, sys.I386, sys.PPC64, sys.S390X, sys.Wasm:
 			p.To.Type = obj.TYPE_REG
 		case sys.ARM, sys.ARM64, sys.MIPS, sys.MIPS64:
 			p.To.Type = obj.TYPE_MEM
@@ -5240,13 +5277,15 @@ func (s *SSAGenState) Call(v *ssa.Value) *obj.Prog {
 // It must be called immediately before emitting the actual CALL instruction,
 // since it emits PCDATA for the stack map at the call (calls are safe points).
 func (s *SSAGenState) PrepareCall(v *ssa.Value) {
-	idx, ok := s.stackMapIndex[v]
-	if !ok {
-		Fatalf("missing stack map index for %v", v.LongString())
+	idx := s.livenessMap.Get(v)
+	if !idx.Valid() {
+		// typedmemclr and typedmemmove are write barriers and
+		// deeply non-preemptible. They are unsafe points and
+		// hence should not have liveness maps.
+		if sym, _ := v.Aux.(*obj.LSym); !(sym == typedmemclr || sym == typedmemmove) {
+			Fatalf("missing stack map index for %v", v.LongString())
+		}
 	}
-	p := s.Prog(obj.APCDATA)
-	Addrconst(&p.From, objabi.PCDATA_StackMapIndex)
-	Addrconst(&p.To, int64(idx))
 
 	if sym, _ := v.Aux.(*obj.LSym); sym == Deferreturn {
 		// Deferred calls will appear to be returning to

@@ -121,6 +121,11 @@ const (
 	_EV_EOF       = 0x8000
 	_EVFILT_READ  = -0x1
 	_EVFILT_WRITE = -0x2
+
+	_PTHREAD_CREATE_DETACHED = 0x2
+
+	_F_SETFD    = 0x2
+	_FD_CLOEXEC = 0x1
 )
 
 type machbody struct {
@@ -389,4 +394,14 @@ type keventt struct {
 	fflags uint32
 	data   int64
 	udata  *byte
+}
+
+type pthread uintptr
+type pthreadattr struct {
+	X__sig    int64
+	X__opaque [56]int8
+}
+type machTimebaseInfo struct {
+	numer uint32
+	denom uint32
 }

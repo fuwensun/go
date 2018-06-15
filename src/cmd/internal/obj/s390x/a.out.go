@@ -150,7 +150,7 @@ const (
 )
 
 // LINUX for zSeries ELF Application Binary Interface Supplement
-// http://refspecs.linuxfoundation.org/ELF/zSeries/lzsabi0_zSeries/x1472.html
+// https://refspecs.linuxfoundation.org/ELF/zSeries/lzsabi0_zSeries/x1472.html
 var S390XDWARFRegisters = map[int16]int16{}
 
 func init() {
@@ -941,6 +941,7 @@ const (
 	AVUPLB
 	AVUPLHW
 	AVUPLF
+	AVMSLG
 
 	// binary
 	ABYTE

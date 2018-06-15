@@ -608,8 +608,9 @@ func TestShouldRedirectConcurrency(t *testing.T) {
 	mux.HandleFunc("/", func(w ResponseWriter, r *Request) {})
 }
 
-func BenchmarkServeMux(b *testing.B) {
-
+func BenchmarkServeMux(b *testing.B)           { benchmarkServeMux(b, true) }
+func BenchmarkServeMux_SkipServe(b *testing.B) { benchmarkServeMux(b, false) }
+func benchmarkServeMux(b *testing.B, runHandler bool) {
 	type test struct {
 		path string
 		code int
@@ -641,9 +642,11 @@ func BenchmarkServeMux(b *testing.B) {
 		for _, tt := range tests {
 			*rw = httptest.ResponseRecorder{}
 			h, pattern := mux.Handler(tt.req)
-			h.ServeHTTP(rw, tt.req)
-			if pattern != tt.path || rw.Code != tt.code {
-				b.Fatalf("got %d, %q, want %d, %q", rw.Code, pattern, tt.code, tt.path)
+			if runHandler {
+				h.ServeHTTP(rw, tt.req)
+				if pattern != tt.path || rw.Code != tt.code {
+					b.Fatalf("got %d, %q, want %d, %q", rw.Code, pattern, tt.code, tt.path)
+				}
 			}
 		}
 	}
@@ -2581,31 +2584,49 @@ func TestRedirect(t *testing.T) {
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()
 		Redirect(rec, req, tt.in, 302)
+		if got, want := rec.Code, 302; got != want {
+			t.Errorf("Redirect(%q) generated status code %v; want %v", tt.in, got, want)
+		}
 		if got := rec.Header().Get("Location"); got != tt.want {
 			t.Errorf("Redirect(%q) generated Location header %q; want %q", tt.in, got, tt.want)
 		}
 	}
 }
 
-// Test that Content-Type header is set for GET and HEAD requests.
-func TestRedirectContentTypeAndBody(t *testing.T) {
+// Test that Redirect sets Content-Type header for GET and HEAD requests
+// and writes a short HTML body, unless the request already has a Content-Type header.
+func TestRedirect_contentTypeAndBody(t *testing.T) {
+	type ctHeader struct {
+		Values []string
+	}
+
 	var tests = []struct {
 		method   string
+		ct       *ctHeader // Optional Content-Type header to set.
 		wantCT   string
 		wantBody string
 	}{
-		{MethodGet, "text/html; charset=utf-8", "<a href=\"/foo\">Found</a>.\n\n"},
-		{MethodHead, "text/html; charset=utf-8", ""},
-		{MethodPost, "", ""},
-		{MethodDelete, "", ""},
-		{"foo", "", ""},
+		{MethodGet, nil, "text/html; charset=utf-8", "<a href=\"/foo\">Found</a>.\n\n"},
+		{MethodHead, nil, "text/html; charset=utf-8", ""},
+		{MethodPost, nil, "", ""},
+		{MethodDelete, nil, "", ""},
+		{"foo", nil, "", ""},
+		{MethodGet, &ctHeader{[]string{"application/test"}}, "application/test", ""},
+		{MethodGet, &ctHeader{[]string{}}, "", ""},
+		{MethodGet, &ctHeader{nil}, "", ""},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(tt.method, "http://example.com/qux/", nil)
 		rec := httptest.NewRecorder()
+		if tt.ct != nil {
+			rec.Header()["Content-Type"] = tt.ct.Values
+		}
 		Redirect(rec, req, "/foo", 302)
+		if got, want := rec.Code, 302; got != want {
+			t.Errorf("Redirect(%q, %#v) generated status code %v; want %v", tt.method, tt.ct, got, want)
+		}
 		if got, want := rec.Header().Get("Content-Type"), tt.wantCT; got != want {
-			t.Errorf("Redirect(%q) generated Content-Type header %q; want %q", tt.method, got, want)
+			t.Errorf("Redirect(%q, %#v) generated Content-Type header %q; want %q", tt.method, tt.ct, got, want)
 		}
 		resp := rec.Result()
 		body, err := ioutil.ReadAll(resp.Body)
@@ -2613,7 +2634,7 @@ func TestRedirectContentTypeAndBody(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got, want := string(body), tt.wantBody; got != want {
-			t.Errorf("Redirect(%q) generated Body %q; want %q", tt.method, got, want)
+			t.Errorf("Redirect(%q, %#v) generated Body %q; want %q", tt.method, tt.ct, got, want)
 		}
 	}
 }
@@ -5863,6 +5884,44 @@ func (eofListenerNotComparable) Close() error              { return nil }
 func TestServerListenNotComparableListener(t *testing.T) {
 	var s Server
 	s.Serve(make(eofListenerNotComparable, 1)) // used to panic
+}
+
+// countCloseListener is a Listener wrapper that counts the number of Close calls.
+type countCloseListener struct {
+	net.Listener
+	closes int32 // atomic
+}
+
+func (p *countCloseListener) Close() error {
+	atomic.AddInt32(&p.closes, 1)
+	return nil
+}
+
+// Issue 24803: don't call Listener.Close on Server.Shutdown.
+func TestServerCloseListenerOnce(t *testing.T) {
+	setParallel(t)
+	defer afterTest(t)
+
+	ln := newLocalListener(t)
+	defer ln.Close()
+
+	cl := &countCloseListener{Listener: ln}
+	server := &Server{}
+	sdone := make(chan bool, 1)
+
+	go func() {
+		server.Serve(cl)
+		sdone <- true
+	}()
+	time.Sleep(10 * time.Millisecond)
+	server.Shutdown(context.Background())
+	ln.Close()
+	<-sdone
+
+	nclose := atomic.LoadInt32(&cl.closes)
+	if nclose != 1 {
+		t.Errorf("Close calls = %v; want 1", nclose)
+	}
 }
 
 func BenchmarkResponseStatusLine(b *testing.B) {

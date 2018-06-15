@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"golang_org/x/net/http/httpguts"
-	"golang_org/x/net/lex/httplex"
 )
 
 // Errors used by the HTTP server.
@@ -108,7 +107,7 @@ type ResponseWriter interface {
 	// is to prefix the Header map keys with the TrailerPrefix
 	// constant value. See TrailerPrefix.
 	//
-	// To suppress implicit response headers (such as "Date"), set
+	// To suppress automatic response headers (such as "Date"), set
 	// their value to nil.
 	Header() Header
 
@@ -118,7 +117,9 @@ type ResponseWriter interface {
 	// WriteHeader(http.StatusOK) before writing the data. If the Header
 	// does not contain a Content-Type line, Write adds a Content-Type set
 	// to the result of passing the initial 512 bytes of written data to
-	// DetectContentType.
+	// DetectContentType. Additionally, if the total size of all written
+	// data is under a few KB and there are no Flush calls, the
+	// Content-Length header is added automatically.
 	//
 	// Depending on the HTTP protocol version and the client, calling
 	// Write or WriteHeader may prevent future reads on the
@@ -188,8 +189,8 @@ type Hijacker interface {
 	// The returned bufio.Reader may contain unprocessed buffered
 	// data from the client.
 	//
-	// After a call to Hijack, the original Request.Body must
-	// not be used.
+	// After a call to Hijack, the original Request.Body must not
+	// be used, and the Request.Context will be canceled.
 	Hijack() (net.Conn, *bufio.ReadWriter, error)
 }
 
@@ -964,15 +965,15 @@ func (c *conn) readRequest(ctx context.Context) (w *response, err error) {
 	if len(hosts) > 1 {
 		return nil, badRequestError("too many Host headers")
 	}
-	if len(hosts) == 1 && !httplex.ValidHostHeader(hosts[0]) {
+	if len(hosts) == 1 && !httpguts.ValidHostHeader(hosts[0]) {
 		return nil, badRequestError("malformed Host header")
 	}
 	for k, vv := range req.Header {
-		if !httplex.ValidHeaderFieldName(k) {
+		if !httpguts.ValidHeaderFieldName(k) {
 			return nil, badRequestError("invalid header name")
 		}
 		for _, v := range vv {
-			if !httplex.ValidHeaderFieldValue(v) {
+			if !httpguts.ValidHeaderFieldValue(v) {
 				return nil, badRequestError("invalid header value")
 			}
 		}
@@ -1058,7 +1059,7 @@ func checkWriteHeaderCode(code int) {
 	// Issue 22880: require valid WriteHeader status codes.
 	// For now we only enforce that it's three digits.
 	// In the future we might block things over 599 (600 and above aren't defined
-	// at http://httpwg.org/specs/rfc7231.html#status.codes)
+	// at https://httpwg.org/specs/rfc7231.html#status.codes)
 	// and we might block under 200 (once we have more mature 1xx support).
 	// But for now any three digits.
 	//
@@ -2003,6 +2004,11 @@ func StripPrefix(prefix string, h Handler) Handler {
 //
 // The provided code should be in the 3xx range and is usually
 // StatusMovedPermanently, StatusFound or StatusSeeOther.
+//
+// If the Content-Type header has not been set, Redirect sets it
+// to "text/html; charset=utf-8" and writes a small HTML body.
+// Setting the Content-Type header to any value, including nil,
+// disables that behavior.
 func Redirect(w ResponseWriter, r *Request, url string, code int) {
 	// parseURL is just url.Parse (url is shadowed for godoc).
 	if u, err := parseURL(url); err == nil {
@@ -2039,18 +2045,23 @@ func Redirect(w ResponseWriter, r *Request, url string, code int) {
 		}
 	}
 
-	w.Header().Set("Location", hexEscapeNonASCII(url))
-	if r.Method == "GET" || r.Method == "HEAD" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	h := w.Header()
+
+	// RFC 7231 notes that a short HTML body is usually included in
+	// the response because older user agents may not understand 301/307.
+	// Do it only if the request didn't already have a Content-Type header.
+	_, hadCT := h["Content-Type"]
+
+	h.Set("Location", hexEscapeNonASCII(url))
+	if !hadCT && (r.Method == "GET" || r.Method == "HEAD") {
+		h.Set("Content-Type", "text/html; charset=utf-8")
 	}
 	w.WriteHeader(code)
 
-	// RFC 7231 notes that a short hypertext note is usually included in
-	// the response because older user agents may not understand 301/307.
-	// Shouldn't send the response for POST or HEAD; that leaves GET.
-	if r.Method == "GET" {
-		note := "<a href=\"" + htmlEscape(url) + "\">" + statusText[code] + "</a>.\n"
-		fmt.Fprintln(w, note)
+	// Shouldn't send the body for POST or HEAD; that leaves GET.
+	if !hadCT && r.Method == "GET" {
+		body := "<a href=\"" + htmlEscape(url) + "\">" + statusText[code] + "</a>.\n"
+		fmt.Fprintln(w, body)
 	}
 }
 
@@ -2171,7 +2182,12 @@ func cleanPath(p string) string {
 	// path.Clean removes trailing slash except for root;
 	// put the trailing slash back if necessary.
 	if p[len(p)-1] == '/' && np != "/" {
-		np += "/"
+		// Fast path for common case of p being the string we want:
+		if len(p) == len(np)+1 && strings.HasPrefix(p, np) {
+			np = p
+		} else {
+			np += "/"
+		}
 	}
 	return np
 }
@@ -2754,10 +2770,13 @@ var ErrServerClosed = errors.New("http: Server closed")
 // Serve always returns a non-nil error. After Shutdown or Close, the
 // returned error is ErrServerClosed.
 func (srv *Server) Serve(l net.Listener) error {
-	defer l.Close()
 	if fn := testHookServerServe; fn != nil {
-		fn(srv, l)
+		fn(srv, l) // call hook with unwrapped listener
 	}
+
+	l = &onceCloseListener{Listener: l}
+	defer l.Close()
+
 	var tempDelay time.Duration // how long to sleep on accept failure
 
 	if err := srv.setupHTTP2_Serve(); err != nil {
@@ -3232,6 +3251,21 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 	tc.SetKeepAlivePeriod(3 * time.Minute)
 	return tc, nil
 }
+
+// onceCloseListener wraps a net.Listener, protecting it from
+// multiple Close calls.
+type onceCloseListener struct {
+	net.Listener
+	once     sync.Once
+	closeErr error
+}
+
+func (oc *onceCloseListener) Close() error {
+	oc.once.Do(oc.close)
+	return oc.closeErr
+}
+
+func (oc *onceCloseListener) close() { oc.closeErr = oc.Listener.Close() }
 
 // globalOptionsHandler responds to "OPTIONS *" requests.
 type globalOptionsHandler struct{}

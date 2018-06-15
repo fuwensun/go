@@ -67,7 +67,11 @@ func tracebackdefers(gp *g, callback func(*stkframe, unsafe.Pointer) bool, v uns
 			}
 			frame.fn = f
 			frame.argp = uintptr(deferArgs(d))
-			frame.arglen, frame.argmap = getArgInfo(&frame, f, true, fn)
+			var ok bool
+			frame.arglen, frame.argmap, ok = getArgInfoFast(f, true)
+			if !ok {
+				frame.arglen, frame.argmap = getArgInfo(&frame, f, true, fn)
+			}
 		}
 		frame.continpc = frame.pc
 		if !callback((*stkframe)(noescape(unsafe.Pointer(&frame))), v) {
@@ -279,7 +283,11 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		// metadata recorded by f's caller.
 		if callback != nil || printing {
 			frame.argp = frame.fp + sys.MinFrameSize
-			frame.arglen, frame.argmap = getArgInfo(&frame, f, callback != nil, nil)
+			var ok bool
+			frame.arglen, frame.argmap, ok = getArgInfoFast(f, callback != nil)
+			if !ok {
+				frame.arglen, frame.argmap = getArgInfo(&frame, f, callback != nil, nil)
+			}
 		}
 
 		// Determine frame's 'continuation PC', where it can continue.
@@ -294,7 +302,14 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		// returns; everything live at earlier deferprocs is still live at that one.
 		frame.continpc = frame.pc
 		if waspanic {
-			if _defer != nil && _defer.sp == frame.sp {
+			// We match up defers with frames using the SP.
+			// However, if the function has an empty stack
+			// frame, then it's possible (on LR machines)
+			// for multiple call frames to have the same
+			// SP. But, since a function with no frame
+			// can't push a defer, the defer can't belong
+			// to that frame.
+			if _defer != nil && _defer.sp == frame.sp && frame.sp != frame.fp {
 				frame.continpc = _defer.pc
 			} else {
 				frame.continpc = 0
@@ -302,7 +317,7 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		}
 
 		// Unwind our local defer stack past this frame.
-		for _defer != nil && (_defer.sp == frame.sp || _defer.sp == _NoArgs) {
+		for _defer != nil && ((_defer.sp == frame.sp && frame.sp != frame.fp) || _defer.sp == _NoArgs) {
 			_defer = _defer.link
 		}
 
@@ -546,6 +561,15 @@ type reflectMethodValue struct {
 	stack *bitvector // args bitmap
 }
 
+// getArgInfoFast returns the argument frame information for a call to f.
+// It is short and inlineable. However, it does not handle all functions.
+// If ok reports false, you must call getArgInfo instead.
+// TODO(josharian): once we do mid-stack inlining,
+// call getArgInfo directly from getArgInfoFast and stop returning an ok bool.
+func getArgInfoFast(f funcInfo, needArgMap bool) (arglen uintptr, argmap *bitvector, ok bool) {
+	return uintptr(f.args), nil, !(needArgMap && f.args == _ArgsSizeUnknown)
+}
+
 // getArgInfo returns the argument frame information for a call to f
 // with call frame frame.
 //
@@ -761,7 +785,7 @@ func printAncestorTracebackFuncInfo(f funcInfo, pc uintptr) bool {
 }
 
 func callers(skip int, pcbuf []uintptr) int {
-	sp := getcallersp(unsafe.Pointer(&skip))
+	sp := getcallersp()
 	pc := getcallerpc()
 	gp := getg()
 	var n int
@@ -855,8 +879,8 @@ func goroutineheader(gp *g) {
 	}
 
 	// Override.
-	if gpstatus == _Gwaiting && gp.waitreason != "" {
-		status = gp.waitreason
+	if gpstatus == _Gwaiting && gp.waitreason != waitReasonZero {
+		status = gp.waitreason.String()
 	}
 
 	// approx time the G is blocked, in minutes
@@ -973,18 +997,25 @@ func topofstack(f funcInfo, g0 bool) bool {
 		(g0 && f.funcID == funcID_asmcgocall)
 }
 
-// isSystemGoroutine reports whether the goroutine g must be omitted in
-// stack dumps and deadlock detector.
+// isSystemGoroutine reports whether the goroutine g must be omitted
+// in stack dumps and deadlock detector. This is any goroutine that
+// starts at a runtime.* entry point, except for runtime.main and
+// sometimes runtime.runfinq.
 func isSystemGoroutine(gp *g) bool {
+	// Keep this in sync with cmd/trace/trace.go:isSystemGoroutine.
 	f := findfunc(gp.startpc)
 	if !f.valid() {
 		return false
 	}
-	return f.funcID == funcID_runfinq && !fingRunning ||
-		f.funcID == funcID_bgsweep ||
-		f.funcID == funcID_forcegchelper ||
-		f.funcID == funcID_timerproc ||
-		f.funcID == funcID_gcBgMarkWorker
+	if f.funcID == funcID_runtime_main {
+		return false
+	}
+	if f.funcID == funcID_runfinq {
+		// We include the finalizer goroutine if it's calling
+		// back into user code.
+		return !fingRunning
+	}
+	return hasprefix(funcname(f), "runtime.")
 }
 
 // SetCgoTraceback records three C functions to use to gather

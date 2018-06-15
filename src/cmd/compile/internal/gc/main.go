@@ -180,6 +180,7 @@ func Main(archInit func(*Arch)) {
 	gopkg = types.NewPkg("go", "")
 
 	Nacl = objabi.GOOS == "nacl"
+	Wasm := objabi.GOARCH == "wasm"
 
 	flag.BoolVar(&compiling_runtime, "+", false, "compiling runtime")
 	flag.BoolVar(&compiling_std, "std", false, "compiling standard library")
@@ -200,7 +201,7 @@ func Main(archInit func(*Arch)) {
 	flag.IntVar(&nBackendWorkers, "c", 1, "concurrency during compilation, 1 means no concurrency")
 	flag.BoolVar(&pure_go, "complete", false, "compiling complete package (no C or assembly)")
 	flag.StringVar(&debugstr, "d", "", "print debug information about items in `list`; try -d help")
-	flag.BoolVar(&flagDWARF, "dwarf", true, "generate DWARF symbols")
+	flag.BoolVar(&flagDWARF, "dwarf", !Wasm, "generate DWARF symbols")
 	flag.BoolVar(&Ctxt.Flag_locationlists, "dwarflocationlists", true, "add location lists to DWARF in optimized mode")
 	flag.IntVar(&genDwarfInline, "gendwarfinl", 2, "generate DWARF inline info records")
 	objabi.Flagcount("e", "no limit on number of errors reported", &Debug['e'])
@@ -265,6 +266,7 @@ func Main(archInit func(*Arch)) {
 	} else {
 		// turn off inline generation if no dwarf at all
 		genDwarfInline = 0
+		Ctxt.Flag_locationlists = false
 	}
 
 	if flag.NArg() < 1 && debugstr != "help" && debugstr != "ssa/help" {
@@ -479,15 +481,13 @@ func Main(archInit func(*Arch)) {
 	// Phase 1: const, type, and names and types of funcs.
 	//   This will gather all the information about types
 	//   and methods but doesn't depend on any of it.
-	//   We also defer type alias declarations until phase 2
-	//   to avoid cycles like #18640.
 	defercheckwidth()
 
 	// Don't use range--typecheck can add closures to xtop.
 	timings.Start("fe", "typecheck", "top1")
 	for i := 0; i < len(xtop); i++ {
 		n := xtop[i]
-		if op := n.Op; op != ODCL && op != OAS && op != OAS2 && (op != ODCLTYPE || !n.Left.Name.Param.Alias) {
+		if op := n.Op; op != ODCL && op != OAS && op != OAS2 {
 			xtop[i] = typecheck(n, Etop)
 		}
 	}
@@ -499,7 +499,7 @@ func Main(archInit func(*Arch)) {
 	timings.Start("fe", "typecheck", "top2")
 	for i := 0; i < len(xtop); i++ {
 		n := xtop[i]
-		if op := n.Op; op == ODCL || op == OAS || op == OAS2 || op == ODCLTYPE && n.Left.Name.Param.Alias {
+		if op := n.Op; op == ODCL || op == OAS || op == OAS2 {
 			xtop[i] = typecheck(n, Etop)
 		}
 	}
@@ -529,6 +529,10 @@ func Main(archInit func(*Arch)) {
 	// With all types ckecked, it's now safe to verify map keys.
 	checkMapKeys()
 	timings.AddEvent(fcount, "funcs")
+
+	if nsavederrors+nerrors != 0 {
+		errorexit()
+	}
 
 	// Phase 4: Decide how to capture closed variables.
 	// This needs to run before escape analysis,
@@ -657,14 +661,6 @@ func Main(archInit func(*Arch)) {
 			Ctxt.DwFixups = nil
 			genDwarfInline = 0
 		}
-
-		// Check whether any of the functions we have compiled have gigantic stack frames.
-		obj.SortSlice(largeStackFrames, func(i, j int) bool {
-			return largeStackFrames[i].Before(largeStackFrames[j])
-		})
-		for _, largePos := range largeStackFrames {
-			yyerrorl(largePos, "stack frame too large (>1GB)")
-		}
 	}
 
 	// Phase 9: Check external declarations.
@@ -684,6 +680,14 @@ func Main(archInit func(*Arch)) {
 	dumpobj()
 	if asmhdr != "" {
 		dumpasmhdr()
+	}
+
+	// Check whether any of the functions we have compiled have gigantic stack frames.
+	obj.SortSlice(largeStackFrames, func(i, j int) bool {
+		return largeStackFrames[i].Before(largeStackFrames[j])
+	})
+	for _, largePos := range largeStackFrames {
+		yyerrorl(largePos, "stack frame too large (>1GB)")
 	}
 
 	if len(compilequeue) != 0 {
@@ -1115,10 +1119,21 @@ func importfile(f *Val) *types.Pkg {
 			errorexit()
 		}
 
+		// New indexed format is distinguished by an 'i' byte,
+		// whereas old export format always starts with 'c', 'd', or 'v'.
 		if c == 'i' {
+			if !flagiexport {
+				yyerror("import %s: cannot import package compiled with -iexport=true", file)
+				errorexit()
+			}
+
 			iimport(importpkg, imp)
 		} else {
-			// Old export format always starts with 'c', 'd', or 'v'.
+			if flagiexport {
+				yyerror("import %s: cannot import package compiled with -iexport=false", file)
+				errorexit()
+			}
+
 			imp.UnreadByte()
 			Import(importpkg, imp.Reader)
 		}

@@ -68,6 +68,12 @@ func lwp_self() int32
 
 func osyield()
 
+func kqueue() int32
+
+//go:noescape
+func kevent(kq int32, ch *keventt, nch int32, ev *keventt, nev int32, ts *timespec) int32
+func closeonexec(fd int32)
+
 const (
 	_ESRCH     = 3
 	_ETIMEDOUT = 60
@@ -174,7 +180,8 @@ func semawakeup(mp *m) {
 
 // May run with m.p==nil, so write barriers are not allowed.
 //go:nowritebarrier
-func newosproc(mp *m, stk unsafe.Pointer) {
+func newosproc(mp *m) {
+	stk := unsafe.Pointer(mp.g0.stack.hi)
 	if false {
 		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " id=", mp.id, " ostk=", &mp, "\n")
 	}

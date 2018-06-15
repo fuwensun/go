@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build !js
+
 package net
 
 import (
@@ -64,8 +66,10 @@ var backoffDuration = [...]time.Duration{time.Second, 5 * time.Second, 30 * time
 
 func TestLookupGoogleSRV(t *testing.T) {
 	t.Parallel()
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
+	mustHaveExternalNetwork(t)
+
+	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
+		t.Skip("no resolv.conf on iOS")
 	}
 
 	if !supportsIPv4() || !*testIPv4 {
@@ -111,8 +115,10 @@ var lookupGmailMXTests = []struct {
 
 func TestLookupGmailMX(t *testing.T) {
 	t.Parallel()
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
+	mustHaveExternalNetwork(t)
+
+	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
+		t.Skip("no resolv.conf on iOS")
 	}
 
 	if !supportsIPv4() || !*testIPv4 {
@@ -155,8 +161,10 @@ var lookupGmailNSTests = []struct {
 
 func TestLookupGmailNS(t *testing.T) {
 	t.Parallel()
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
+	mustHaveExternalNetwork(t)
+
+	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
+		t.Skip("no resolv.conf on iOS")
 	}
 
 	if !supportsIPv4() || !*testIPv4 {
@@ -199,8 +207,10 @@ var lookupGmailTXTTests = []struct {
 
 func TestLookupGmailTXT(t *testing.T) {
 	t.Parallel()
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
+	mustHaveExternalNetwork(t)
+
+	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
+		t.Skip("no resolv.conf on iOS")
 	}
 
 	if !supportsIPv4() || !*testIPv4 {
@@ -245,9 +255,7 @@ var lookupGooglePublicDNSAddrTests = []struct {
 }
 
 func TestLookupGooglePublicDNSAddr(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	if !supportsIPv4() || !supportsIPv6() || !*testIPv4 || !*testIPv6 {
 		t.Skip("both IPv4 and IPv6 are required")
@@ -306,9 +314,7 @@ var lookupCNAMETests = []struct {
 }
 
 func TestLookupCNAME(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	if !supportsIPv4() || !*testIPv4 {
 		t.Skip("IPv4 is required")
@@ -346,9 +352,7 @@ var lookupGoogleHostTests = []struct {
 }
 
 func TestLookupGoogleHost(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	if !supportsIPv4() || !*testIPv4 {
 		t.Skip("IPv4 is required")
@@ -374,9 +378,7 @@ func TestLookupGoogleHost(t *testing.T) {
 
 func TestLookupLongTXT(t *testing.T) {
 	testenv.SkipFlaky(t, 22857)
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	defer dnsWaitGroup.Wait()
 
@@ -402,9 +404,7 @@ var lookupGoogleIPTests = []struct {
 }
 
 func TestLookupGoogleIP(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	if !supportsIPv4() || !*testIPv4 {
 		t.Skip("IPv4 is required")
@@ -550,9 +550,7 @@ func TestLookupDotsWithLocalSource(t *testing.T) {
 		t.Skip("IPv4 is required")
 	}
 
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	defer dnsWaitGroup.Wait()
 
@@ -593,12 +591,14 @@ func TestLookupDotsWithLocalSource(t *testing.T) {
 }
 
 func TestLookupDotsWithRemoteSource(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 
 	if !supportsIPv4() || !*testIPv4 {
 		t.Skip("IPv4 is required")
+	}
+
+	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
+		t.Skip("no resolv.conf on iOS")
 	}
 
 	defer dnsWaitGroup.Wait()
@@ -844,9 +844,7 @@ func TestLookupNonLDH(t *testing.T) {
 }
 
 func TestLookupContextCancel(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 	if runtime.GOOS == "nacl" {
 		t.Skip("skip on nacl")
 	}
@@ -871,9 +869,7 @@ func TestLookupContextCancel(t *testing.T) {
 // Issue 24330: treat the nil *Resolver like a zero value. Verify nothing
 // crashes if nil is used.
 func TestNilResolverLookup(t *testing.T) {
-	if testenv.Builder() == "" {
-		testenv.MustHaveExternalNetwork(t)
-	}
+	mustHaveExternalNetwork(t)
 	if runtime.GOOS == "nacl" {
 		t.Skip("skip on nacl")
 	}
@@ -890,4 +886,42 @@ func TestNilResolverLookup(t *testing.T) {
 	r.LookupPort(ctx, "tcp", "smtp")
 	r.LookupSRV(ctx, "service", "proto", "name")
 	r.LookupTXT(ctx, "gmail.com")
+}
+
+// TestLookupHostCancel verifies that lookup works even after many
+// canceled lookups (see golang.org/issue/24178 for details).
+func TestLookupHostCancel(t *testing.T) {
+	mustHaveExternalNetwork(t)
+	if runtime.GOOS == "nacl" {
+		t.Skip("skip on nacl")
+	}
+
+	const (
+		google        = "www.google.com"
+		invalidDomain = "nonexistentdomain.golang.org"
+		n             = 600 // this needs to be larger than threadLimit size
+	)
+
+	_, err := LookupHost(google)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < n; i++ {
+		addr, err := DefaultResolver.LookupHost(ctx, invalidDomain)
+		if err == nil {
+			t.Fatalf("LookupHost(%q): returns %v, but should fail", invalidDomain, addr)
+		}
+		if !strings.Contains(err.Error(), "canceled") {
+			t.Fatalf("LookupHost(%q): failed with unexpected error: %v", invalidDomain, err)
+		}
+		time.Sleep(time.Millisecond * 1)
+	}
+
+	_, err = LookupHost(google)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

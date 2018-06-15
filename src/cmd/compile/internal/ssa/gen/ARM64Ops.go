@@ -255,6 +255,10 @@ func init() {
 		{name: "CMNconst", argLength: 1, reg: gp1flags, asm: "CMN", aux: "Int64", typ: "Flags"},   // arg0 compare to -auxInt
 		{name: "CMNW", argLength: 2, reg: gp2flags, asm: "CMNW", typ: "Flags"},                    // arg0 compare to -arg1, 32 bit
 		{name: "CMNWconst", argLength: 1, reg: gp1flags, asm: "CMNW", aux: "Int32", typ: "Flags"}, // arg0 compare to -auxInt, 32 bit
+		{name: "TST", argLength: 2, reg: gp2flags, asm: "TST", typ: "Flags"},                      // arg0 & arg1 compare to 0
+		{name: "TSTconst", argLength: 1, reg: gp1flags, asm: "TST", aux: "Int64", typ: "Flags"},   // arg0 & auxInt compare to 0
+		{name: "TSTW", argLength: 2, reg: gp2flags, asm: "TSTW", typ: "Flags"},                    // arg0 & arg1 compare to 0, 32 bit
+		{name: "TSTWconst", argLength: 1, reg: gp1flags, asm: "TSTW", aux: "Int32", typ: "Flags"}, // arg0 & auxInt compare to 0, 32 bit
 		{name: "FCMPS", argLength: 2, reg: fp2flags, asm: "FCMPS", typ: "Flags"},                  // arg0 compare to arg1, float32
 		{name: "FCMPD", argLength: 2, reg: fp2flags, asm: "FCMPD", typ: "Flags"},                  // arg0 compare to arg1, float64
 
@@ -320,13 +324,20 @@ func init() {
 		{name: "FMOVDload", argLength: 2, reg: fpload, aux: "SymOff", asm: "FMOVD", typ: "Float64", faultOnNilArg0: true, symEffect: "Read"}, // load from arg0 + auxInt + aux.  arg1=mem.
 
 		// register indexed load
-		{name: "MOVDloadidx", argLength: 3, reg: gp2load, asm: "MOVD", faultOnNilArg0: true},   // load 64-bit dword from arg0 + arg1, arg2 = mem.
-		{name: "MOVWloadidx", argLength: 3, reg: gp2load, asm: "MOVW", faultOnNilArg0: true},   // load 32-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
-		{name: "MOVWUloadidx", argLength: 3, reg: gp2load, asm: "MOVWU", faultOnNilArg0: true}, // load 32-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
-		{name: "MOVHloadidx", argLength: 3, reg: gp2load, asm: "MOVH", faultOnNilArg0: true},   // load 16-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
-		{name: "MOVHUloadidx", argLength: 3, reg: gp2load, asm: "MOVHU", faultOnNilArg0: true}, // load 16-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
-		{name: "MOVBloadidx", argLength: 3, reg: gp2load, asm: "MOVB", faultOnNilArg0: true},   // load 8-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
-		{name: "MOVBUloadidx", argLength: 3, reg: gp2load, asm: "MOVBU", faultOnNilArg0: true}, // load 8-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
+		{name: "MOVDloadidx", argLength: 3, reg: gp2load, asm: "MOVD"},   // load 64-bit dword from arg0 + arg1, arg2 = mem.
+		{name: "MOVWloadidx", argLength: 3, reg: gp2load, asm: "MOVW"},   // load 32-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
+		{name: "MOVWUloadidx", argLength: 3, reg: gp2load, asm: "MOVWU"}, // load 32-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
+		{name: "MOVHloadidx", argLength: 3, reg: gp2load, asm: "MOVH"},   // load 16-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
+		{name: "MOVHUloadidx", argLength: 3, reg: gp2load, asm: "MOVHU"}, // load 16-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
+		{name: "MOVBloadidx", argLength: 3, reg: gp2load, asm: "MOVB"},   // load 8-bit word from arg0 + arg1, sign-extended to 64-bit, arg2=mem.
+		{name: "MOVBUloadidx", argLength: 3, reg: gp2load, asm: "MOVBU"}, // load 8-bit word from arg0 + arg1, zero-extended to 64-bit, arg2=mem.
+
+		// shifted register indexed load
+		{name: "MOVHloadidx2", argLength: 3, reg: gp2load, asm: "MOVH"},   // load 16-bit half-word from arg0 + arg1*2, sign-extended to 64-bit, arg2=mem.
+		{name: "MOVHUloadidx2", argLength: 3, reg: gp2load, asm: "MOVHU"}, // load 16-bit half-word from arg0 + arg1*2, zero-extended to 64-bit, arg2=mem.
+		{name: "MOVWloadidx4", argLength: 3, reg: gp2load, asm: "MOVW"},   // load 32-bit word from arg0 + arg1*4, sign-extended to 64-bit, arg2=mem.
+		{name: "MOVWUloadidx4", argLength: 3, reg: gp2load, asm: "MOVWU"}, // load 32-bit word from arg0 + arg1*4, zero-extended to 64-bit, arg2=mem.
+		{name: "MOVDloadidx8", argLength: 3, reg: gp2load, asm: "MOVD"},   // load 64-bit double-word from arg0 + arg1*8, arg2 = mem.
 
 		{name: "MOVBstore", argLength: 3, reg: gpstore, aux: "SymOff", asm: "MOVB", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"},   // store 1 byte of arg1 to arg0 + auxInt + aux.  arg2=mem.
 		{name: "MOVHstore", argLength: 3, reg: gpstore, aux: "SymOff", asm: "MOVH", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"},   // store 2 bytes of arg1 to arg0 + auxInt + aux.  arg2=mem.
@@ -337,10 +348,15 @@ func init() {
 		{name: "FMOVDstore", argLength: 3, reg: fpstore, aux: "SymOff", asm: "FMOVD", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // store 8 bytes of arg1 to arg0 + auxInt + aux.  arg2=mem.
 
 		// register indexed store
-		{name: "MOVBstoreidx", argLength: 4, reg: gpstore2, asm: "MOVB", typ: "Mem", faultOnNilArg0: true}, // store 1 byte of arg2 to arg0 + arg1, arg3 = mem.
-		{name: "MOVHstoreidx", argLength: 4, reg: gpstore2, asm: "MOVH", typ: "Mem", faultOnNilArg0: true}, // store 2 bytes of arg2 to arg0 + arg1, arg3 = mem.
-		{name: "MOVWstoreidx", argLength: 4, reg: gpstore2, asm: "MOVW", typ: "Mem", faultOnNilArg0: true}, // store 4 bytes of arg2 to arg0 + arg1, arg3 = mem.
-		{name: "MOVDstoreidx", argLength: 4, reg: gpstore2, asm: "MOVD", typ: "Mem", faultOnNilArg0: true}, // store 8 bytes of arg2 to arg0 + arg1, arg3 = mem.
+		{name: "MOVBstoreidx", argLength: 4, reg: gpstore2, asm: "MOVB", typ: "Mem"}, // store 1 byte of arg2 to arg0 + arg1, arg3 = mem.
+		{name: "MOVHstoreidx", argLength: 4, reg: gpstore2, asm: "MOVH", typ: "Mem"}, // store 2 bytes of arg2 to arg0 + arg1, arg3 = mem.
+		{name: "MOVWstoreidx", argLength: 4, reg: gpstore2, asm: "MOVW", typ: "Mem"}, // store 4 bytes of arg2 to arg0 + arg1, arg3 = mem.
+		{name: "MOVDstoreidx", argLength: 4, reg: gpstore2, asm: "MOVD", typ: "Mem"}, // store 8 bytes of arg2 to arg0 + arg1, arg3 = mem.
+
+		// shifted register indexed store
+		{name: "MOVHstoreidx2", argLength: 4, reg: gpstore2, asm: "MOVH", typ: "Mem"}, // store 2 bytes of arg2 to arg0 + arg1*2, arg3 = mem.
+		{name: "MOVWstoreidx4", argLength: 4, reg: gpstore2, asm: "MOVW", typ: "Mem"}, // store 4 bytes of arg2 to arg0 + arg1*4, arg3 = mem.
+		{name: "MOVDstoreidx8", argLength: 4, reg: gpstore2, asm: "MOVD", typ: "Mem"}, // store 8 bytes of arg2 to arg0 + arg1*8, arg3 = mem.
 
 		{name: "MOVBstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOVB", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // store 1 byte of zero to arg0 + auxInt + aux.  arg1=mem.
 		{name: "MOVHstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOVH", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // store 2 bytes of zero to arg0 + auxInt + aux.  arg1=mem.
@@ -349,10 +365,15 @@ func init() {
 		{name: "MOVQstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "STP", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"},  // store 16 bytes of zero to arg0 + auxInt + aux.  arg1=mem.
 
 		// register indexed store zero
-		{name: "MOVBstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVB", typ: "Mem", faultOnNilArg0: true}, // store 1 byte of zero to arg0 + arg1, arg2 = mem.
-		{name: "MOVHstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVH", typ: "Mem", faultOnNilArg0: true}, // store 2 bytes of zero to arg0 + arg1, arg2 = mem.
-		{name: "MOVWstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVW", typ: "Mem", faultOnNilArg0: true}, // store 4 bytes of zero to arg0 + arg1, arg2 = mem.
-		{name: "MOVDstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVD", typ: "Mem", faultOnNilArg0: true}, // store 8 bytes of zero to arg0 + arg1, arg2 = mem.
+		{name: "MOVBstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVB", typ: "Mem"}, // store 1 byte of zero to arg0 + arg1, arg2 = mem.
+		{name: "MOVHstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVH", typ: "Mem"}, // store 2 bytes of zero to arg0 + arg1, arg2 = mem.
+		{name: "MOVWstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVW", typ: "Mem"}, // store 4 bytes of zero to arg0 + arg1, arg2 = mem.
+		{name: "MOVDstorezeroidx", argLength: 3, reg: gpstore, asm: "MOVD", typ: "Mem"}, // store 8 bytes of zero to arg0 + arg1, arg2 = mem.
+
+		// shifted register indexed store zero
+		{name: "MOVHstorezeroidx2", argLength: 3, reg: gpstore, asm: "MOVH", typ: "Mem"}, // store 2 bytes of zero to arg0 + arg1*2, arg2 = mem.
+		{name: "MOVWstorezeroidx4", argLength: 3, reg: gpstore, asm: "MOVW", typ: "Mem"}, // store 4 bytes of zero to arg0 + arg1*4, arg2 = mem.
+		{name: "MOVDstorezeroidx8", argLength: 3, reg: gpstore, asm: "MOVD", typ: "Mem"}, // store 8 bytes of zero to arg0 + arg1*8, arg2 = mem.
 
 		{name: "FMOVDgpfp", argLength: 1, reg: gpfp, asm: "FMOVD"}, // move int64 to float64 (no conversion)
 		{name: "FMOVDfpgp", argLength: 1, reg: fpgp, asm: "FMOVD"}, // move float64 to int64 (no conversion)
@@ -506,6 +527,12 @@ func init() {
 		// LoweredGetCallerSP returns the SP of the caller of the current function.
 		{name: "LoweredGetCallerSP", reg: gp01, rematerializeable: true},
 
+		// LoweredGetCallerPC evaluates to the PC to which its "caller" will return.
+		// I.e., if f calls g "calls" getcallerpc,
+		// the result should be the PC within f that g will return to.
+		// See runtime/stubs.go for a more detailed discussion.
+		{name: "LoweredGetCallerPC", reg: gp01, rematerializeable: true},
+
 		// Constant flag values. For any comparison, there are 5 possible
 		// outcomes: the three from the signed total order (<,==,>) and the
 		// three from the unsigned total order. The == cases overlap.
@@ -569,13 +596,13 @@ func init() {
 		{name: "LoweredAtomicCas32", argLength: 4, reg: gpcas, resultNotInArgs: true, clobberFlags: true, faultOnNilArg0: true, hasSideEffects: true},
 
 		// atomic and/or.
-		// *arg0 &= (|=) arg1. arg2=mem. returns memory. auxint must be zero.
-		// LDAXRB	(Rarg0), Rtmp
-		// AND/OR	Rarg1, Rtmp
-		// STLXRB	Rtmp, (Rarg0), Rtmp
+		// *arg0 &= (|=) arg1. arg2=mem. returns <new content of *arg0, memory>. auxint must be zero.
+		// LDAXRB	(Rarg0), Rout
+		// AND/OR	Rarg1, Rout
+		// STLXRB	Rout, (Rarg0), Rtmp
 		// CBNZ		Rtmp, -3(PC)
-		{name: "LoweredAtomicAnd8", argLength: 3, reg: gpstore, asm: "AND", faultOnNilArg0: true, hasSideEffects: true},
-		{name: "LoweredAtomicOr8", argLength: 3, reg: gpstore, asm: "ORR", faultOnNilArg0: true, hasSideEffects: true},
+		{name: "LoweredAtomicAnd8", argLength: 3, reg: gpxchg, resultNotInArgs: true, asm: "AND", typ: "(UInt8,Mem)", faultOnNilArg0: true, hasSideEffects: true},
+		{name: "LoweredAtomicOr8", argLength: 3, reg: gpxchg, resultNotInArgs: true, asm: "ORR", typ: "(UInt8,Mem)", faultOnNilArg0: true, hasSideEffects: true},
 
 		// LoweredWB invokes runtime.gcWriteBarrier. arg0=destptr, arg1=srcptr, arg2=mem, aux=runtime.gcWriteBarrier
 		// It saves all GP registers if necessary,

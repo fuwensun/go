@@ -17,6 +17,7 @@ import (
 	"go/ast"
 	"go/printer"
 	"go/token"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -163,6 +164,7 @@ var ptrSizeMap = map[string]int64{
 	"mips64le": 8,
 	"ppc64":    8,
 	"ppc64le":  8,
+	"riscv64":  8,
 	"s390":     4,
 	"s390x":    8,
 	"sparc64":  8,
@@ -179,6 +181,7 @@ var intSizeMap = map[string]int64{
 	"mips64le": 8,
 	"ppc64":    8,
 	"ppc64le":  8,
+	"riscv64":  8,
 	"s390":     4,
 	"s390x":    8,
 	"sparc64":  8,
@@ -277,6 +280,7 @@ func main() {
 	// concern is other cgo wrappers for the same functions.
 	// Use the beginning of the md5 of the input to disambiguate.
 	h := md5.New()
+	io.WriteString(h, *importPath)
 	fs := make([]*File, len(goFiles))
 	for i, input := range goFiles {
 		if *srcDir != "" {

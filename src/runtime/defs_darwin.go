@@ -17,12 +17,15 @@ package runtime
 #define __DARWIN_UNIX03 0
 #include <mach/mach.h>
 #include <mach/message.h>
+#include <mach/mach_time.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <errno.h>
 #include <signal.h>
 #include <sys/event.h>
 #include <sys/mman.h>
+#include <pthread.h>
+#include <fcntl.h>
 */
 import "C"
 
@@ -142,6 +145,11 @@ const (
 	EV_EOF       = C.EV_EOF
 	EVFILT_READ  = C.EVFILT_READ
 	EVFILT_WRITE = C.EVFILT_WRITE
+
+	PTHREAD_CREATE_DETACHED = C.PTHREAD_CREATE_DETACHED
+
+	F_SETFD    = C.F_SETFD
+	FD_CLOEXEC = C.FD_CLOEXEC
 )
 
 type MachBody C.mach_msg_body_t
@@ -154,6 +162,7 @@ type Sighandler C.union___sigaction_u
 
 type Sigaction C.struct___sigaction // used in syscalls
 type Usigaction C.struct_sigaction  // used by sigaction second argument
+type Sigset C.sigset_t
 type Sigval C.union_sigval
 type Siginfo C.siginfo_t
 type Timeval C.struct_timeval
@@ -178,3 +187,8 @@ type Mcontext32 C.struct_mcontext32
 type Ucontext C.struct_ucontext
 
 type Kevent C.struct_kevent
+
+type Pthread C.pthread_t
+type PthreadAttr C.pthread_attr_t
+
+type MachTimebaseInfo C.mach_timebase_info_data_t

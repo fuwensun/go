@@ -316,7 +316,8 @@ type Request struct {
 //
 // For incoming server requests, the context is canceled when the
 // client's connection closes, the request is canceled (with HTTP/2),
-// or when the ServeHTTP method returns.
+// the ServeHTTP method returns, or if the Hijack method is
+// called on the ResponseWriter.
 func (r *Request) Context() context.Context {
 	if r.ctx != nil {
 		return r.ctx
@@ -858,7 +859,8 @@ func (r *Request) BasicAuth() (username, password string, ok bool) {
 // "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" returns ("Aladdin", "open sesame", true).
 func parseBasicAuth(auth string) (username, password string, ok bool) {
 	const prefix = "Basic "
-	if !strings.HasPrefix(auth, prefix) {
+	// Case insensitive prefix match. See Issue 22736.
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
 		return
 	}
 	c, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
@@ -910,6 +912,11 @@ func putTextprotoReader(r *textproto.Reader) {
 }
 
 // ReadRequest reads and parses an incoming request from b.
+//
+// ReadRequest is a low-level function and should only be used for
+// specialized applications; most code should use the Server to read
+// requests and handle them via the Handler interface. ReadRequest
+// only supports HTTP/1.x requests. For HTTP/2, use golang.org/x/net/http2.
 func ReadRequest(b *bufio.Reader) (*Request, error) {
 	return readRequest(b, deleteHostHeader)
 }
@@ -1248,8 +1255,8 @@ func (r *Request) FormValue(key string) string {
 	return ""
 }
 
-// PostFormValue returns the first value for the named component of the POST
-// or PUT request body. URL query parameters are ignored.
+// PostFormValue returns the first value for the named component of the POST,
+// PATCH, or PUT request body. URL query parameters are ignored.
 // PostFormValue calls ParseMultipartForm and ParseForm if necessary and ignores
 // any errors returned by these functions.
 // If key is not present, PostFormValue returns the empty string.
